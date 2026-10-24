@@ -1,0 +1,13 @@
+# Island Leads Worker. Antes do primeiro deploy: crie o banco e cole o database_id abaixo.
+#   npx wrangler d1 create island-base
+name = "island-leads"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "island-base"
+database_id = "COLE_AQUI_O_DATABASE_ID"   # ← NÃO inventado: vem do comando d1 create
+migrations_dir = "migrations"
+
+# O segredo NÃO fica aqui. Cadastre com:  npx wrangler secret put WEBHOOK_SECRET
