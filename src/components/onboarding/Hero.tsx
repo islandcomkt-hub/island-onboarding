@@ -1,5 +1,6 @@
 "use client";
 import type { CSSProperties } from "react";
+import ServiceShowcase from "./ServiceShowcase";
 
 interface Props {
   intro: boolean;
@@ -90,6 +91,7 @@ export default function Hero({ hasDraft, onStart, onResume, onDiscard, onOpenPri
           </a>
         </div>
       </div>
+      <ServiceShowcase onStart={onStart} />
     </div>
   );
 }

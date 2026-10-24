@@ -16,7 +16,7 @@ const pathD = (() => {
 })();
 
 /**
- * Cena 2D (SVG) usada quando WebGL não existe/falha e como primeiro quadro enquanto a cena 3D carrega.
+ * Cena 2D (SVG) usada somente quando WebGL não existe ou falha. As ilhas surgem uma por uma.
  * Mantém a mesma narrativa: ilhas acendem, rota progride e o barco navega, guiados pelo mesmo estado.
  */
 export default function StaticArchipelago() {
@@ -78,11 +78,17 @@ export default function StaticArchipelago() {
           .isl[data-state="active"] .halo { opacity:.28 }
           .isl[data-state="done"] .halo { fill:#00c85a; opacity:.18 }
           @keyframes lampPulse { 50% { opacity:.55 } }
-          @media (prefers-reduced-motion: reduce){ .isl[data-state="active"] .lamp { animation:none } }
+          @keyframes islIn { from { opacity:0 } to { opacity:1 } }
+          @keyframes bodyIn { from { transform: translateY(2px) scale(.3) } to { transform: none } }
+          .isl { animation: islIn .8s cubic-bezier(.16,1,.3,1) both }
+          .isl .body { transform-box: fill-box; transform-origin: center bottom; animation: bodyIn .9s cubic-bezier(.16,1,.3,1) both; animation-delay: inherit }
+          .svg-fade { animation: islIn 1s ease both; animation-delay: 1.4s }
+          .svg-boat { animation: islIn .8s ease both; animation-delay: .5s }
+          @media (prefers-reduced-motion: reduce){ .isl[data-state="active"] .lamp { animation:none } .isl, .isl .body, .svg-fade, .svg-boat { animation:none } }
         `}</style>
       </defs>
       <rect width={VB_W} height={VB_H} fill="url(#sea)" />
-      <path d={pathD} fill="none" stroke="#7a5cc0" strokeOpacity=".35" strokeWidth=".35" strokeDasharray="1 1.4" />
+      <path className="svg-fade" d={pathD} fill="none" stroke="#7a5cc0" strokeOpacity=".35" strokeWidth=".35" strokeDasharray="1 1.4" />
       <path
         ref={routeDone}
         d={pathD}
@@ -95,7 +101,7 @@ export default function StaticArchipelago() {
         pathLength={1000}
       />
       {ISLAND_LAYOUT.map((l, i) => (
-        <g key={l.id} className="isl" data-state="future" ref={(el) => { islandEls.current[i] = el; }} transform={`translate(${sx(l.x)} ${sz(l.z)})`}>
+        <g key={l.id} className="isl" style={{ animationDelay: `${0.15 + i * 0.32}s` }} data-state="future" ref={(el) => { islandEls.current[i] = el; }} transform={`translate(${sx(l.x)} ${sz(l.z)})`}>
           <circle className="halo" r="6.5" />
           <g className="body">
             <ellipse rx="5.2" ry="2.1" cy="1.1" />
@@ -104,7 +110,7 @@ export default function StaticArchipelago() {
           <circle className="lamp" cx="0.6" cy="-3.4" r=".9" />
         </g>
       ))}
-      <g ref={boat}>
+      <g ref={boat} className="svg-boat">
         <path d="M-2.4 0 Q-2 1.4 0 1.5 Q2.4 1.3 3 0 Z" fill="#5a3524" stroke="#ff7417" strokeWidth=".25" />
         <path d="M-.2 0 V-4 L1.8 -.4 Z" fill="#1b0f33" stroke="#ff7417" strokeWidth=".2" />
       </g>

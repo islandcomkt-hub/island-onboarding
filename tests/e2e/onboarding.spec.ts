@@ -262,3 +262,72 @@ test.describe("hero mobile e scroll estável", () => {
     expect(blank, "intervalo sem texto (só nas trocas)").toBeLessThanOrEqual(5);
   });
 });
+
+test.describe("entrada das ilhas (sem tela de carregamento)", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test("o quadro falso não aparece e as ilhas surgem uma por uma", async ({ page }) => {
+    await page.goto("/");
+    // nunca mostra o SVG chapado enquanto o WebGL inicia
+    const fb = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".scene-fallback")!).opacity));
+    expect(fb, "fallback invisível com WebGL ok").toBe(0);
+    const samples: number[][] = [];
+    for (let i = 0; i < 24; i++) {
+      samples.push(await page.evaluate(() => [...document.querySelectorAll(".isl-label")].map((e) => parseFloat((e as HTMLElement).style.opacity || "0"))));
+      await page.waitForTimeout(250);
+    }
+    const staggered = samples.some((s) => s.some((o) => o > 0.9) && s.some((o) => o < 0.1));
+    expect(staggered, "em algum instante há ilhas já visíveis e outras ainda submersas").toBe(true);
+    const last = samples[samples.length - 1];
+    expect(last.every((o) => o > 0.95), "ao final as 6 ilhas aparecem").toBe(true);
+    await expect(page.locator(".scene-wrap")).toHaveAttribute("data-webgl", "on");
+  });
+});
+
+test.describe("carrossel 3D de serviços (desktop)", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test("aparece, troca sozinho, pausa e é acessível", async ({ page }) => {
+    await page.goto("/");
+    const section = page.getByRole("region", { name: "Serviços da Island" });
+    await expect(section).toBeVisible();
+    const front = () => page.locator('.svc-card[data-front="true"]').getAttribute("aria-label");
+    expect(await page.locator(".svc-card").count()).toBe(5);
+    expect(await page.locator('.svc-card[aria-hidden="true"]').count(), "só o slide da frente é exposto").toBe(4);
+    const first = await front();
+    await page.waitForTimeout(5200);
+    expect(await front(), "troca sozinho").not.toBe(first);
+    await page.getByRole("button", { name: "Pausar carrossel" }).click();
+    const paused = await front();
+    await page.waitForTimeout(5200);
+    expect(await front(), "pausado não troca").toBe(paused);
+    await page.getByRole("button", { name: "Mostrar Tech" }).click();
+    await expect(page.locator('.svc-card[data-front="true"] .svc-tag')).toHaveText(/Tech/);
+    const transform = await page.locator('.svc-card[data-front="false"]').first().evaluate((e) => getComputedStyle(e).transform);
+    expect(transform, "slides laterais usam transformação 3D").toMatch(/matrix3d/);
+    // cobre a área vazia do painel
+    const m = await page.evaluate(() => {
+      const panel = document.querySelector(".panel")!.getBoundingClientRect();
+      const svc = document.querySelector(".svc")!.getBoundingClientRect();
+      return { svcBottom: svc.bottom, panelBottom: panel.bottom, gap: panel.bottom - svc.bottom };
+    });
+    expect(m.gap, "carrossel dentro do painel").toBeGreaterThanOrEqual(0);
+    const r = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+    expect(r.violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)).toEqual([]);
+  });
+
+  test("não existe no celular", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await expect(page.locator(".svc")).toHaveCount(0);
+  });
+
+  test("com movimento reduzido não troca sozinho", async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+    const page = await ctx.newPage();
+    await page.goto("/");
+    const front = () => page.locator('.svc-card[data-front="true"]').getAttribute("aria-label");
+    const first = await front();
+    await page.waitForTimeout(5200);
+    expect(await front()).toBe(first);
+    await ctx.close();
+  });
+});

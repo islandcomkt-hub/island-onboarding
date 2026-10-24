@@ -10,8 +10,9 @@ interface Props {
 }
 
 /**
- * Palco do arquipélago. O SVG aparece imediatamente (sem tela de carregamento) e a cena 3D entra
- * por cima assim que estiver pronta. Se não houver WebGL, o SVG animado segue contando a mesma história.
+ * Palco do arquipélago. Não existe tela de carregamento nem quadro "falso": enquanto a cena 3D inicia, só
+ * o mar escuro aparece; ao ficar pronta, as ilhas emergem uma por uma. O SVG animado só é exibido
+ * se o WebGL não existir ou falhar (data-webgl="off"), e também faz as ilhas surgirem em sequência.
  */
 export default function ArchipelagoStage({ getPanelWidth }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -59,7 +60,7 @@ export default function ArchipelagoStage({ getPanelWidth }: Props) {
   }, []);
 
   return (
-    <div ref={wrapRef} className="scene-wrap" data-webgl={webgl === "on" ? "on" : "off"} aria-hidden="true">
+    <div ref={wrapRef} className="scene-wrap" data-webgl={webgl} aria-hidden="true">
       <div className="scene-fallback">
         <StaticArchipelago />
       </div>

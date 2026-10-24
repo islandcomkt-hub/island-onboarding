@@ -56,6 +56,8 @@ export class ArchipelagoScene {
   private disposer = new Disposer();
   private route: RouteModel = buildRoute();
   private islands: IslandHandle[] = [];
+  /** entrada: cada ilha emerge do mar, uma por vez (0 = submersa, 1 = completa) */
+  private rev: Array<{ v: number }> = [];
   private boat!: BoatHandle;
   private ocean!: OceanHandle;
   private routeMesh!: RouteHandle;
@@ -110,6 +112,7 @@ export class ArchipelagoScene {
     this.renderer.toneMappingExposure = 1.15;
 
     this.build();
+    this.startIntro();
     this.resize();
 
     // debounce em rAF: evita tempestade de resize (barra do navegador mobile) que fazia a cena piscar
@@ -144,6 +147,14 @@ export class ArchipelagoScene {
     return this.state.reducedMotion || !!this.mq?.matches;
   }
 
+  /** as ilhas surgem uma por uma (sem tela de carregamento); com movimento reduzido já nascem completas */
+  private startIntro() {
+    if (this.reduced) return;
+    this.rev.forEach((o) => (o.v = 0));
+    this.opts.labels.forEach((el) => (el.style.opacity = "0"));
+    gsap.to(this.rev, { v: 1, duration: 1.15, ease: "power3.out", stagger: 0.32, delay: 0.12 });
+  }
+
   private build() {
     const d = this.disposer;
     const glow = d.track(glowTexture());
@@ -162,6 +173,7 @@ export class ArchipelagoScene {
     for (const layout of ISLAND_LAYOUT) {
       const h = buildIsland(layout.id, { glow, disposer: d }, shared.foam, shared.rock);
       this.islands.push(h);
+      this.rev.push({ v: 1 });
       this.scene.add(h.root);
     }
     this.islands.forEach((h) => (h.light.visible = this.tierCfg.lights));
@@ -326,13 +338,28 @@ export class ArchipelagoScene {
     // ilhas, água e rota respondem ao progresso real
     const orange = new THREE.Color(PALETTE.orange);
     const cyan = new THREE.Color(PALETTE.cyan);
+    const overshoot = (x: number) => {
+      if (x >= 1) return 1;
+      const y = x - 1;
+      return 1 + 2.35 * y * y * y + 1.35 * y * y; // easeOutBack: surge e assenta
+    };
+    let revealMean = 0;
     this.islands.forEach((h, i) => {
       if (!this.reduced) h.update(t);
       else h.update(3);
       const l = ISLAND_LAYOUT[i];
+      const r = this.rev[i]?.v ?? 1;
+      revealMean += r / this.islands.length;
+      h.root.visible = r > 0.002;
+      h.root.scale.setScalar(l.scale * Math.max(0.0001, overshoot(r)));
+      h.root.position.y = (r - 1) * 0.9;
       const c = orange.clone().lerp(cyan, h.cur.done * (1 - h.cur.active));
-      this.ocean.setIsland(i, l.x, l.z, 2.1, 0.05 + h.cur.active * 0.5 + h.cur.done * 0.26, c);
+      this.ocean.setIsland(i, l.x, l.z, 2.1, (0.05 + h.cur.active * 0.5 + h.cur.done * 0.26) * r, c);
     });
+    const r0 = this.rev[0]?.v ?? 1;
+    this.boat.root.visible = r0 > 0.05;
+    this.boat.trail.visible = r0 > 0.05;
+    this.routeMesh.setMaster(revealMean);
     this.ocean.update(t);
     const next = this.route.stopU.find((su) => su > u + 0.002);
     this.routeMesh.setProgress(u, this.state.phase === "done" ? -1 : (next ?? -1));
@@ -383,6 +410,8 @@ export class ArchipelagoScene {
       const x = (this.tmp.x * 0.5 + 0.5) * w;
       const y = (-this.tmp.y * 0.5 + 0.5) * h;
       el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
+      const o = Math.min(1, (this.rev[i]?.v ?? 1) * 1.6).toFixed(2);
+      if (el.style.opacity !== o) el.style.opacity = o;
       const st =
         this.state.phase === "form" && this.state.activeStep === i
           ? "active"
@@ -419,6 +448,7 @@ export class ArchipelagoScene {
     cancelAnimationFrame(this.resizeRaf);
     this.boatTween?.kill();
     this.islands.forEach((h) => gsap.killTweensOf(h.cur));
+    gsap.killTweensOf(this.rev);
     this.unsub?.();
     this.io?.disconnect();
     this.ro?.disconnect();

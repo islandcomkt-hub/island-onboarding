@@ -40,3 +40,8 @@ Testado localmente com wrangler (D1 emulado): 401 sem/errada assinatura, gravaç
 - Contratos conferidos por script: UTMs/FBCLID no envio, rascunho restaurado após recarregar, journeyId, honeypot, chaves das respostas e mensagem do WhatsApp.
 - Prints: docs/evidence/redesign (celular 390x844 e desktop 1440x900: hero, 6 etapas, sucesso).
 - Não testado: aparelhos reais e Safari/iOS. O barquinho da tela final usa `offset-path` (navegadores modernos); em movimento reduzido fica parado no destino.
+
+## Entrada das ilhas e carrossel de serviços
+- Sem tela de carregamento: o SVG chapado só aparece se o WebGL falhar (`data-webgl="off"`); com WebGL as ilhas, rota, rótulos e barco surgem uma a uma (stagger) direto na cena.
+- Carrossel 3D "Anúncio" (somente desktop ≥900x860, dentro do painel da hero): 5 slides, só o da frente exposto a leitores de tela, autoplay 4,2s com botão de pausa, pontos de navegação, parado com `prefers-reduced-motion`.
+- Cobertura e2e: ilhas escalonadas, 5 slides/aria-hidden, autoplay e pausa, transformação 3D, axe, ausência no celular, movimento reduzido. Suíte completa: 30 testes passando.
