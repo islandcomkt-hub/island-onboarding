@@ -314,6 +314,31 @@ test.describe("carrossel 3D de serviços (desktop)", () => {
     expect(r.violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)).toEqual([]);
   });
 
+  test("clicar e arrastar passa para o próximo card", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Pausar carrossel" }).click();
+    const tag = () => page.locator('.svc-card[data-front="true"] .svc-tag').innerText();
+    const first = await tag();
+    const box = (await page.locator(".svc-stage").boundingBox())!;
+    const y = box.y + 60, cx = box.x + box.width / 2;
+    await page.mouse.move(cx + 80, y);
+    await page.mouse.down();
+    await page.mouse.move(cx, y, { steps: 6 });
+    await page.mouse.move(cx - 90, y, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    const second = await tag();
+    expect(second, "arrastar para a esquerda avança").not.toBe(first);
+    await page.mouse.move(cx - 90, y);
+    await page.mouse.down();
+    await page.mouse.move(cx, y, { steps: 6 });
+    await page.mouse.move(cx + 90, y, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    expect(await tag(), "arrastar para a direita volta").toBe(first);
+    await page.locator(".svc-stage").focus().catch(() => {});
+  });
+
   test("não existe no celular", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");

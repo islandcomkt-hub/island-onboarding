@@ -58,7 +58,7 @@ const SERVICES: Service[] = [
   },
 ];
 
-const QUERY = "(min-width: 900px) and (min-height: 860px)";
+const QUERY = "(min-width: 900px) and (min-height: 820px)";
 const N = SERVICES.length;
 
 export default function ServiceShowcase({ onStart }: { onStart: () => void }) {
@@ -67,7 +67,11 @@ export default function ServiceShowcase({ onStart }: { onStart: () => void }) {
   const [paused, setPaused] = useState(false);
   const [reduced, setReduced] = useState(false);
   const [inView, setInView] = useState(true);
+  const [drag, setDrag] = useState(0); // deslocamento do arraste, em "cards" (-1..1)
+  const [dragging, setDragging] = useState(false);
   const root = useRef<HTMLElement>(null);
+  const gesture = useRef<{ x: number; id: number; moved: boolean } | null>(null);
+  const STEP = 96; // px de arraste = 1 card
 
   // só monta no desktop com altura suficiente (nada roda no celular)
   useEffect(() => {
@@ -95,25 +99,70 @@ export default function ServiceShowcase({ onStart }: { onStart: () => void }) {
   }, [enabled]);
 
   useEffect(() => {
-    if (!enabled || paused || reduced || !inView) return;
+    if (!enabled || paused || reduced || !inView || dragging) return;
     const id = window.setInterval(() => {
       if (!document.hidden) setActive((a) => (a + 1) % N);
     }, 4200);
     return () => clearInterval(id);
-  }, [enabled, paused, reduced, inView]);
+  }, [enabled, paused, reduced, inView, dragging]);
 
   if (!enabled) return null;
 
   const half = Math.floor(N / 2);
   const offsetOf = (i: number) => ((i - active + N + half) % N) - half;
+  const go = (dir: number) => setActive((a) => (a + dir + N) % N);
+
+  const onDown = (e: React.PointerEvent) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    gesture.current = { x: e.clientX, id: e.pointerId, moved: false };
+  };
+  const onMove = (e: React.PointerEvent) => {
+    const g = gesture.current;
+    if (!g || g.id !== e.pointerId) return;
+    const dx = e.clientX - g.x;
+    if (!g.moved && Math.abs(dx) < 6) return;
+    if (!g.moved) {
+      g.moved = true;
+      setDragging(true);
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    }
+    setDrag(Math.max(-1, Math.min(1, dx / STEP)));
+  };
+  const onUp = (e: React.PointerEvent) => {
+    const g = gesture.current;
+    if (!g || g.id !== e.pointerId) return;
+    gesture.current = null;
+    if (g.moved) {
+      const dx = e.clientX - g.x;
+      if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1);
+      setDrag(0);
+      // evita que o soltar sobre o botão dispare o clique
+      window.setTimeout(() => setDragging(false), 0);
+    }
+  };
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowRight") { e.preventDefault(); go(1); }
+    if (e.key === "ArrowLeft") { e.preventDefault(); go(-1); }
+  };
   const playing = !paused && !reduced;
 
   return (
     <section ref={root} className="svc" aria-roledescription="carrossel" aria-label="Serviços da Island">
-      <div className="svc-stage" aria-live="off">
+      <div
+        className="svc-stage"
+        data-dragging={dragging ? "true" : "false"}
+        aria-live="off"
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onUp}
+        onKeyDown={onKey}
+        onClickCapture={(e) => { if (dragging) { e.preventDefault(); e.stopPropagation(); } }}
+      >
         {SERVICES.map((s, i) => {
-          const o = offsetOf(i);
-          const front = o === 0;
+          const base = offsetOf(i);
+          const front = base === 0;
+          const o = base + drag;
           return (
             <div
               key={s.id}
@@ -124,7 +173,7 @@ export default function ServiceShowcase({ onStart }: { onStart: () => void }) {
               aria-label={`${i + 1} de ${N}: ${s.tag}`}
               aria-hidden={front ? undefined : true}
               inert={!front}
-              style={{ "--o": o, "--a": Math.abs(o), "--acc": s.accent, zIndex: 10 - Math.abs(o) } as CSSProperties}
+              style={{ "--o": o, "--a": Math.abs(o), "--acc": s.accent, zIndex: 10 - Math.round(Math.abs(o)) } as CSSProperties}
             >
               <div className="svc-in">
                 <div className="svc-top">
