@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { completeUntil, fillStep, next, noHorizontalScroll, startJourney } from "./helpers";
+import { assertFits, completeUntil, fillStep, next, noHorizontalScroll, startJourney } from "./helpers";
 
 const stageTitles = ["Quem está embarcando?", "Qual é o seu negócio hoje?", "Qual é o maior obstáculo agora?", "Aonde você quer chegar?", "Qual é o seu momento?", "Como prefere conversar?"];
 
@@ -21,9 +21,10 @@ test.describe("fluxo completo (animações ativas, mobile)", () => {
     await startJourney(page);
     for (let i = 0; i < 6; i++) {
       await expect(page.getByRole("heading", { name: stageTitles[i] })).toBeVisible();
-      await expect(page.getByText(`Etapa ${i + 1} de 6`, { exact: false }).first()).toBeVisible();
+      await expect(page.locator(".rail-count")).toHaveText(`0${i + 1}/06`);
       await fillStep(page, i);
-      await next(page, i === 5);
+      if (i === 0) await next(page);
+      if (i === 5) await next(page, true);
       await noHorizontalScroll(page);
     }
     await expect(page.getByRole("heading", { name: /Rota traçada, Marina/ })).toBeVisible();
@@ -52,7 +53,8 @@ test.describe("fluxo completo (animações ativas, mobile)", () => {
     await next(page);
     // imediatamente após o clique, a próxima pergunta já aceita resposta
     await page.getByRole("radio", { name: "Serviços" }).check({ force: true, timeout: 1500 });
-    await expect(page.getByRole("radio", { name: "Serviços" })).toBeChecked();
+    // um clique e já segue para a próxima pergunta, sem botão Continuar
+    await expect(page.getByRole("heading", { name: "Em que fase está o negócio?" })).toBeVisible();
     const t = await page.evaluate(() => (window as unknown as { __island?: { lastTransition: Record<string, number> | null } }).__island?.lastTransition);
     test.skip(!t, "telemetria de debug não habilitada neste build");
     await page.waitForFunction(() => (window as unknown as { __island: { boatMoving: boolean } }).__island.boatMoving === false, null, { timeout: 8000 });
@@ -70,7 +72,7 @@ test.describe("fluxo completo (animações ativas, mobile)", () => {
     await page.route("**/api/onboarding", (r) => r.abort());
     await next(page, true);
     await expect(page.getByRole("alert").filter({ hasText: /Sem conexão/ })).toBeVisible();
-    await expect(page.getByRole("heading", { name: stageTitles[5] })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Tudo pronto para traçar a sua rota" })).toBeVisible();
     await page.unroute("**/api/onboarding");
     await next(page, true);
     await expect(page.getByRole("heading", { name: /Rota traçada/ })).toBeVisible();
@@ -106,16 +108,16 @@ test.describe("fluxo completo (animações ativas, mobile)", () => {
     await completeUntil(page, 4);
     await fillStep(page, 5);
     await page.waitForTimeout(700);
+    const draft = await page.evaluate(() => localStorage.getItem("island:onboarding:draft:v1") || "");
+    expect(draft).not.toContain("consentimento");
     await page.reload();
     await page.getByRole("button", { name: "Continuar de onde parei" }).click();
     await expect(page.getByRole("heading", { name: stageTitles[5] })).toBeVisible();
-    await expect(page.getByRole("radio", { name: "Tarde" })).toBeChecked();
-    await expect(page.getByRole("checkbox")).not.toBeChecked();
-    await page.getByRole("button", { name: "Voltar" }).click();
-    await page.getByRole("button", { name: "Voltar" }).click();
-    await page.getByRole("button", { name: "Voltar" }).click();
-    await page.getByRole("button", { name: "Voltar" }).click();
-    await page.getByRole("button", { name: "Voltar" }).click();
+    await expect(page.getByRole("radio", { name: "WhatsApp", exact: true })).toBeChecked();
+    for (let k = 0; k < 12 && !(await page.getByLabel("Como podemos te chamar?").isVisible()); k++) {
+      await page.getByRole("button", { name: "Voltar" }).click();
+      await page.waitForTimeout(120);
+    }
     await expect(page.getByLabel("Como podemos te chamar?")).toHaveValue("Marina");
     await expect(page.getByLabel("WhatsApp com DDD")).toHaveValue("(31) 98869-0118");
   });
@@ -139,6 +141,10 @@ test.describe("navegação por teclado", () => {
     await page.getByRole("radio", { name: "Comércio e varejo" }).focus();
     await page.keyboard.press("ArrowDown");
     await expect(page.getByRole("radio", { name: "Serviços" })).toBeChecked();
+    // pelo teclado as setas só escolhem; Enter confirma e segue
+    await expect(page.getByRole("heading", { name: stageTitles[1] })).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("heading", { name: "Em que fase está o negócio?" })).toBeVisible();
   });
 });
 
@@ -162,39 +168,42 @@ test.describe("sem WebGL", () => {
 
 test.describe("movimento reduzido", () => {
   test.use({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
-  test("fluxo completo sem animações de travessia", async ({ page }) => {
+  // contexto explícito: neste ambiente o `test.use({ reducedMotion })` não chega à página
+  test("fluxo completo sem animações de travessia", async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+    const page = await ctx.newPage();
+    expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
     await startJourney(page);
     await completeUntil(page, 5);
     await expect(page.getByRole("heading", { name: /Rota traçada/ })).toBeVisible();
     const moving = await page.evaluate(() => (window as unknown as { __island?: { boatMoving: boolean } }).__island?.boatMoving ?? false);
     expect(moving).toBe(false);
+    await ctx.close();
   });
 });
 
 const viewports = [
   [320, 568], [360, 740], [390, 844], [430, 932], [768, 1024], [1024, 768], [1280, 720], [1440, 900], [1920, 1080],
 ] as const;
-test.describe("responsividade (sem scroll horizontal, controles sempre visíveis)", () => {
+test.describe("responsividade (cada pergunta cabe na tela, sem rolagem)", () => {
   test.use({ reducedMotion: "reduce" });
   for (const [w, h] of viewports) {
-    test(`${w}x${h}`, async ({ page }) => {
-      await page.setViewportSize({ width: w, height: h });
+    test(`${w}x${h}`, async ({ browser }) => {
+      const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce" });
+      const page = await ctx.newPage();
       await page.goto("/");
       await noHorizontalScroll(page);
       const cta = page.getByRole("button", { name: /Mapear minha rota/ });
       await cta.scrollIntoViewIfNeeded();
       await expect(cta).toBeVisible();
       await cta.click();
-      for (let i = 0; i < 6; i++) {
-        await noHorizontalScroll(page);
-        const box = await page.getByRole("button", { name: i === 5 ? "Enviar diagnóstico" : "Continuar" }).boundingBox();
-        expect(box, "botão principal visível").not.toBeNull();
-        expect(box!.y + box!.height).toBeLessThanOrEqual(h + 1);
-        expect(box!.x).toBeGreaterThanOrEqual(0);
-        expect(box!.x + box!.width).toBeLessThanOrEqual(w);
-        await fillStep(page, i);
-        if (i < 5) await next(page);
-      }
+      const fits = async () => assertFits(page, `${w}x${h}`);
+      await fits();
+      await fillStep(page, 0);
+      await next(page);
+      for (let i = 1; i < 6; i++) await fillStep(page, i, fits);
+      await fits();
+      await ctx.close();
     });
   }
 });
@@ -270,13 +279,23 @@ test.describe("entrada das ilhas (sem tela de carregamento)", () => {
     // nunca mostra o SVG chapado enquanto o WebGL inicia
     const fb = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".scene-fallback")!).opacity));
     expect(fb, "fallback invisível com WebGL ok").toBe(0);
-    const samples: number[][] = [];
-    for (let i = 0; i < 24; i++) {
-      samples.push(await page.evaluate(() => [...document.querySelectorAll(".isl-label")].map((e) => parseFloat((e as HTMLElement).style.opacity || "0"))));
-      await page.waitForTimeout(250);
-    }
-    const staggered = samples.some((s) => s.some((o) => o > 0.9) && s.some((o) => o < 0.1));
-    expect(staggered, "em algum instante há ilhas já visíveis e outras ainda submersas").toBe(true);
+    // amostragem dentro da página (a cada 60ms, por 6s): não depende da latência do teste
+    const samples: number[][] = await page.evaluate(
+      () =>
+        new Promise<number[][]>((resolve) => {
+          const out: number[][] = [];
+          const id = setInterval(() => {
+            out.push([...document.querySelectorAll(".isl-label")].map((e) => parseFloat((e as HTMLElement).style.opacity || "0")));
+            if (out.length >= 100) {
+              clearInterval(id);
+              resolve(out);
+            }
+          }, 60);
+        }),
+    );
+    // escalonado: em algum instante umas já emergiram e outras ainda estão bem abaixo
+    const staggered = samples.some((x) => Math.max(...x) - Math.min(...x) >= 0.6);
+    expect(staggered, `em algum instante há ilhas já visíveis e outras ainda submersas: ${samples.filter((_, i) => i % 5 === 0).map((x) => x.join(",")).join(" | ")}`).toBe(true);
     const last = samples[samples.length - 1];
     expect(last.every((o) => o > 0.95), "ao final as 6 ilhas aparecem").toBe(true);
     await expect(page.locator(".scene-wrap")).toHaveAttribute("data-webgl", "on");

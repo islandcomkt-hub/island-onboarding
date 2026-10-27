@@ -45,3 +45,12 @@ Testado localmente com wrangler (D1 emulado): 401 sem/errada assinatura, gravaç
 - Sem tela de carregamento: o SVG chapado só aparece se o WebGL falhar (`data-webgl="off"`); com WebGL as ilhas, rota, rótulos e barco surgem uma a uma (stagger) direto na cena.
 - Carrossel 3D "Anúncio" (somente desktop ≥900x860, dentro do painel da hero): 5 slides, só o da frente exposto a leitores de tela, autoplay 4,2s com botão de pausa, pontos de navegação, parado com `prefers-reduced-motion`.
 - Cobertura e2e: ilhas escalonadas, 5 slides/aria-hidden, autoplay e pausa, transformação 3D, axe, ausência no celular, movimento reduzido. Suíte completa: 30 testes passando.
+
+## Fluxo em 1 clique (sem rolagem)
+- Cada etapa virou telas curtas, uma pergunta por vez (src/components/onboarding/screens.ts). Escolher uma opção com mouse/toque já avança; pelo teclado as setas escolhem e Enter confirma.
+- Navegação compacta no topo: voltar, 02/06 + nome da etapa e 6 pontos. A barra inferior "Voltar / Continuar" saiu.
+- Partida (nome, empresa, WhatsApp) mantém o botão Continuar (Enter também avança). E-mail só é pedido se o canal escolhido for e-mail.
+- Último passo: "Concordo e enviar diagnóstico" registra o consentimento e envia num clique só.
+- Teste de responsividade agora percorre todas as telas em 9 tamanhos e falha se houver qualquer rolagem vertical ou horizontal.
+- Ilhas: sobem de baixo do mar, uma por uma, com subida suave (sem salto de escala); shaders compilados antes do primeiro quadro e a animação só começa depois de 2 quadros desenhados.
+- Suíte completa: 31 testes passando.

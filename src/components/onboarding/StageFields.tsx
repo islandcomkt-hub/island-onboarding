@@ -1,22 +1,23 @@
 "use client";
 import gsap from "gsap";
 import { formatPhone, type Answers, type AnswerValue, type FieldErrors } from "@/lib/validation";
-import type { ChoiceField, Field, Stage, TextField } from "@/config/stages";
+import { useRef } from "react";
+import type { ChoiceField, Field, TextField } from "@/config/stages";
 import OptionIcon from "./icons";
-import PrivacyText from "./PrivacyText";
 
 // Acentos das ilhas: Performance, Tech, Media, Estratégia (dão cor a cada tipo de resposta)
 const ACCENTS = ["#FFB347", "#82ABFF", "#00C85A", "#7DDDE6"] as const;
 
 interface Props {
-  stage: Stage;
+  fields: Field[];
   answers: Answers;
   errors: FieldErrors;
   reducedMotion: boolean;
   onChange: (fieldId: string, value: AnswerValue) => void;
-  onOpenPrivacy: () => void;
-  website: string;
-  onWebsite: (v: string) => void;
+  /** clique/toque numa opção: escolhe e segue sozinho */
+  onPick: (fieldId: string, value: string) => void;
+  /** a pergunta já é o título da tela: a legenda fica só para leitores de tela */
+  hideLegend?: boolean;
 }
 
 const Check = () => (
@@ -37,17 +38,26 @@ function OptionalTag({ field }: { field: Field }) {
   return field.required ? null : <span className="opt-tag">opcional</span>;
 }
 
-function ChoiceGroup({ field, value, error, reduced, onChange }: { field: ChoiceField; value: string; error?: string; reduced: boolean; onChange: (v: string) => void }) {
+function ChoiceGroup({ field, value, error, reduced, hideLegend, onChange, onPick }: { field: ChoiceField; value: string; error?: string; reduced: boolean; hideLegend?: boolean; onChange: (v: string) => void; onPick: (v: string) => void }) {
   const errId = `err-${field.id}`;
+  // ponteiro (mouse/toque) escolhe e avança; setas do teclado só escolhem (Enter confirma)
+  const pointer = useRef(false);
   return (
     <fieldset className="field" data-field={field.id} aria-describedby={error ? errId : undefined}>
-      <legend className="label">
+      <legend className={hideLegend ? "sr-only" : "label"}>
         {field.label}
         <OptionalTag field={field} />
       </legend>
-      <div className={`cards${field.options.length <= 4 ? " two" : ""}`} data-invalid={error ? "true" : "false"}>
+      <div className="cards" data-n={field.options.length} data-invalid={error ? "true" : "false"}>
         {field.options.map((o, idx) => (
-          <label className="card" key={o.id} style={{ "--acc": ACCENTS[idx % ACCENTS.length] } as React.CSSProperties}>
+          <label
+            className="card"
+            key={o.id}
+            style={{ "--acc": ACCENTS[idx % ACCENTS.length] } as React.CSSProperties}
+            onPointerDown={() => {
+              pointer.current = true;
+            }}
+          >
             <input
               type="radio"
               name={field.id}
@@ -55,6 +65,11 @@ function ChoiceGroup({ field, value, error, reduced, onChange }: { field: Choice
               checked={value === o.id}
               required={field.required}
               aria-invalid={error ? true : undefined}
+              onClick={() => {
+                if (!pointer.current) return;
+                pointer.current = false;
+                onPick(o.id);
+              }}
               onChange={(e) => {
                 onChange(o.id);
                 if (!reduced) {
@@ -125,61 +140,29 @@ function TextInput({ field, value, error, onChange }: { field: TextField; value:
   );
 }
 
-export default function StageFields({ stage, answers, errors, reducedMotion, onChange, onOpenPrivacy, website, onWebsite }: Props) {
+export default function StageFields({ fields, answers, errors, reducedMotion, onChange, onPick, hideLegend }: Props) {
   return (
     <div className="fields">
-      {stage.fields.map((field, i) => {
+      {fields.map((field) => {
         const error = errors[field.id];
-        const reveal = { "data-reveal": "" } as const;
         if (field.kind === "choice") {
           return (
-            <div key={field.id} {...reveal}>
-              <ChoiceGroup field={field} value={String(answers[field.id] ?? "")} error={error} reduced={reducedMotion} onChange={(v) => onChange(field.id, v)} />
+            <div key={field.id} data-reveal="">
+              <ChoiceGroup
+                field={field}
+                value={String(answers[field.id] ?? "")}
+                error={error}
+                reduced={reducedMotion}
+                hideLegend={hideLegend}
+                onChange={(v) => onChange(field.id, v)}
+                onPick={(v) => onPick(field.id, v)}
+              />
             </div>
           );
         }
-        if (field.kind === "consent") {
-          return (
-            <div key={field.id} className="field" data-field={field.id} {...reveal}>
-              <details className="privacy-card">
-                <summary>Como usamos seus dados</summary>
-                <div className="privacy-card-in">
-                  <PrivacyText />
-                </div>
-              </details>
-              <div className="consent">
-                <input
-                  id={`f-${field.id}`}
-                  type="checkbox"
-                  checked={answers[field.id] === true}
-                  aria-invalid={error ? true : undefined}
-                  aria-describedby={error ? `err-${field.id}` : undefined}
-                  required
-                  onChange={(e) => onChange(field.id, e.target.checked)}
-                />
-                <label htmlFor={`f-${field.id}`}>
-                  {field.label}
-                  <span className="help" style={{ display: "block", marginTop: 6 }}>
-                    <button type="button" className="linklike" onClick={onOpenPrivacy}>
-                      Ver como usamos seus dados
-                    </button>
-                  </span>
-                </label>
-              </div>
-              <ErrorText id={`err-${field.id}`} message={error} />
-              {i === stage.fields.length - 1 && (
-                <div className="hp" aria-hidden="true">
-                  <label>
-                    Não preencha este campo
-                    <input tabIndex={-1} autoComplete="off" name="website" value={website} onChange={(e) => onWebsite(e.target.value)} />
-                  </label>
-                </div>
-              )}
-            </div>
-          );
-        }
+        if (field.kind === "consent") return null;
         return (
-          <div key={field.id} {...reveal}>
+          <div key={field.id} data-reveal="">
             <TextInput field={field} value={String(answers[field.id] ?? "")} error={error} onChange={(v) => onChange(field.id, v)} />
           </div>
         );

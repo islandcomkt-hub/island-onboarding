@@ -7,6 +7,8 @@ import Hero from "./Hero";
 import Done from "./Done";
 import PrivacyDialog from "./PrivacyDialog";
 import StageFields from "./StageFields";
+import PrivacyText from "./PrivacyText";
+import { screensFor } from "./screens";
 import { STAGES, TOTAL_STAGES } from "@/config/stages";
 import { validateAll, validateStage, type AnswerValue, type Answers, type FieldErrors } from "@/lib/validation";
 import { clearDraft, hasMeaningfulProgress, loadDraft, newJourneyId, readUtm, saveDraft, type Draft } from "@/lib/draft";
@@ -31,6 +33,9 @@ import { useReducedMotion } from "@/lib/motion/useReducedMotion";
  *    idempotência por journeyId, rate limit, adapters mock/log/webhook/d1)
  *  • delivery "none" → aviso honesto + resumo completo pelo WhatsApp; senão mensagem curta
  *    "Olá, equipe Island 👋 … Empresa / Direção inicial / Jornada: #ID" (ver Done.tsx)
+ * FLUXO EM 1 CLIQUE
+ *  • cada etapa vira telas curtas (screens.ts): escolher uma opção com mouse/toque já avança;
+ *    setas do teclado só escolhem e Enter confirma; nada exige rolagem
  * ACESSIBILIDADE
  *  • link "Ir para o conteúdo" (layout.tsx), aria-live com a etapa atual, foco no título a cada troca
  * Nomes dos campos, ordem das perguntas, validação e chaves de dados vêm de src/config/stages.ts (inalterados).
@@ -51,6 +56,7 @@ export default function OnboardingApp() {
   const reduced = useReducedMotion();
   const [view, setView] = useState<View>("hero");
   const [step, setStep] = useState(0);
+  const [q, setQ] = useState(0);
   const [dir, setDir] = useState<1 | -1>(1);
   const [done, setDone] = useState<boolean[]>(emptyDone);
   const [answers, setAnswers] = useState<Answers>({});
@@ -70,6 +76,8 @@ export default function OnboardingApp() {
   const panelRef = useRef<HTMLElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const advanceTimer = useRef(0);
+  const here = useRef("hero");
 
   /* ── montagem: UTMs, rascunho, debug ── */
   useEffect(() => {
@@ -96,15 +104,18 @@ export default function OnboardingApp() {
   }, []);
 
   const go = useCallback(
-    (v: View, s: number, d: boolean[], direction: 1 | -1) => {
+    (v: View, s: number, d: boolean[], direction: 1 | -1, screen = 0, title?: string) => {
+      window.clearTimeout(advanceTimer.current);
+      here.current = v === "form" ? `${s}-${screen}` : v;
       setView(v);
       setStep(s);
+      setQ(screen);
       setDir(direction);
       setDone(d);
       setErrors({});
       setSubmitError(null);
       syncScene(v, s, d, direction);
-      if (v === "form") setAnnounce(`Etapa ${s + 1} de ${TOTAL_STAGES}: ${STAGES[s].name}`);
+      if (v === "form") setAnnounce(`Etapa ${s + 1} de ${TOTAL_STAGES}: ${title || STAGES[s].name}`);
     },
     [syncScene],
   );
@@ -173,12 +184,15 @@ export default function OnboardingApp() {
     });
   };
 
-  const submit = async () => {
+  const submit = async (answers: Answers) => {
     if (submittingRef.current) return; // sem envio duplicado
     const full = validateAll(answers);
     if (!full.ok) {
       setErrors(full.errors);
-      go("form", full.firstInvalidStage, done.map((d, i) => d && i < full.firstInvalidStage), full.firstInvalidStage < step ? -1 : 1);
+      const bad = full.firstInvalidStage;
+      const list = screensFor(STAGES[bad], answers);
+      const at = Math.max(0, list.findIndex((sc) => sc.fields.some((f) => full.errors[f.id])));
+      go("form", bad, done.map((d, i) => d && i < bad), bad < step ? -1 : 1, at);
       setErrors(full.errors);
       return;
     }
@@ -218,34 +232,80 @@ export default function OnboardingApp() {
     setSubmitError(res.message);
   };
 
+  /** avança a partir da tela (s, sq) com as respostas `a` */
+  const advanceFrom = (s: number, sq: number, a: Answers) => {
+    const list = screensFor(STAGES[s], a);
+    if (sq < list.length - 1) {
+      go("form", s, done, 1, sq + 1, list[sq + 1].title);
+      return;
+    }
+    const errs = validateStage(STAGES[s], a);
+    if (Object.keys(errs).length) {
+      const at = Math.max(0, list.findIndex((sc) => sc.fields.some((f) => errs[f.id])));
+      go("form", s, done, -1, at, list[at]?.title);
+      setErrors(errs);
+      return;
+    }
+    const nd = done.slice();
+    nd[s] = true;
+    if (s < TOTAL_STAGES - 1) go("form", s + 1, nd, 1, 0, screensFor(STAGES[s + 1], a)[0]?.title);
+  };
+
+  /** clique numa opção: marca, mostra a seleção por um instante e segue sozinho */
+  const onPick = (fieldId: string, value: string) => {
+    const a = { ...answers, [fieldId]: value };
+    setAnswers(a);
+    setErrors({});
+    const s = step;
+    const sq = q;
+    const key = `${s}-${sq}`;
+    window.clearTimeout(advanceTimer.current);
+    advanceTimer.current = window.setTimeout(() => {
+      if (here.current === key) advanceFrom(s, sq, a);
+    }, reduced ? 120 : 280);
+  };
+
+  const sendNow = () => {
+    const a = { ...answers, consentimento: true };
+    setAnswers(a);
+    void submit(a);
+  };
+
   const onContinue = () => {
     if (view !== "form") return;
-    const stage = STAGES[step];
-    const errs = validateStage(stage, answers);
+    const screen = screensFor(STAGES[step], answers)[q];
+    if (!screen) return;
+    if (screen.mode === "confirm") {
+      sendNow();
+      return;
+    }
+    const errs = validateStage({ ...STAGES[step], fields: screen.fields }, answers);
+    if (screen.key === "email" && !String(answers.email ?? "").trim()) errs.email = "Informe o e-mail para conversarmos por lá";
     if (Object.keys(errs).length) {
       setErrors(errs);
       shakeErrors(errs);
       requestAnimationFrame(() => focusField(Object.keys(errs)[0]));
       return;
     }
-    if (step < TOTAL_STAGES - 1) {
-      const nd = done.slice();
-      nd[step] = true;
-      go("form", step + 1, nd, 1);
-    } else {
-      void submit();
-    }
+    advanceFrom(step, q, answers);
   };
 
   const onBack = () => {
+    if (q > 0) {
+      go("form", step, done, -1, q - 1, screensFor(STAGES[step], answers)[q - 1]?.title);
+      return;
+    }
     if (step === 0) go("hero", 0, done, -1);
-    else go("form", step - 1, done, -1);
+    else {
+      const prev = screensFor(STAGES[step - 1], answers);
+      go("form", step - 1, done, -1, prev.length - 1, prev[prev.length - 1]?.title);
+    }
   };
 
   const canVisit = (i: number) => i === 0 || done.slice(0, i).every(Boolean);
   const visit = (i: number) => {
-    if (!canVisit(i) || i === step) return;
-    go("form", i, done, i > step ? 1 : -1);
+    if (!canVisit(i) || (i === step && q === 0)) return;
+    go("form", i, done, i > step ? 1 : -1, 0, screensFor(STAGES[i], answers)[0]?.title);
   };
 
   const openPrivacy = () => dialogRef.current?.showModal();
@@ -270,41 +330,84 @@ export default function OnboardingApp() {
     if (key === "done") {
       return <Done answers={answers} journeyId={journeyId.current} delivery={delivery} whatsappNumber={WHATSAPP} onRestart={restart} />;
     }
-    const i = Number(key.replace("step-", ""));
-    const stage = STAGES[i];
+    const [si, sqi] = key.replace("step-", "").split("-").map(Number);
+    const stage = STAGES[si];
     if (!stage) return null;
+    const screen = screensFor(stage, answers)[sqi];
+    if (!screen) return null;
+    const live = si === step && sqi === q;
     return (
       <form
         noValidate
+        className="screen"
+        data-mode={screen.mode}
         onSubmit={(e) => {
           e.preventDefault();
           onContinue();
         }}
       >
-        <h2 data-heading tabIndex={-1} id={`title-${stage.id}`}>
-          {stage.title}
+        <h2 data-heading tabIndex={-1} id={`title-${stage.id}-${screen.key}`}>
+          {screen.title}
         </h2>
-        {stage.description && <p className="lede">{stage.description}</p>}
-        <StageFields
-          stage={stage}
-          answers={answers}
-          errors={i === step ? errors : {}}
-          reducedMotion={reduced}
-          onChange={onChange}
-          onOpenPrivacy={openPrivacy}
-          website={website}
-          onWebsite={setWebsite}
-        />
-        <button type="submit" className="sr-only" tabIndex={-1} aria-hidden="true">
-          Continuar
-        </button>
+        {screen.lede && <p className="lede">{screen.lede}</p>}
+        {screen.mode === "confirm" ? (
+          <div className="confirm" data-reveal="">
+            <details className="privacy-card">
+              <summary>Como usamos seus dados</summary>
+              <div className="privacy-card-in">
+                <PrivacyText />
+              </div>
+            </details>
+            <p className="consent-note">{STAGES[TOTAL_STAGES - 1].fields.find((f) => f.kind === "consent")?.label}</p>
+            {live && submitError && (
+              <p className="banner" role="alert">
+                {submitError}
+              </p>
+            )}
+            {live && errors.consentimento && (
+              <p className="error" role="alert">
+                {errors.consentimento}
+              </p>
+            )}
+            <button type="submit" className="btn btn-primary btn-block" aria-busy={submitting} disabled={submitting}>
+              {submitting ? "Enviando" : "Concordo e enviar diagnóstico"}
+            </button>
+            <button type="button" className="linklike small" onClick={openPrivacy}>
+              Ver como usamos seus dados
+            </button>
+            <div className="hp" aria-hidden="true">
+              <label>
+                Não preencha este campo
+                <input tabIndex={-1} autoComplete="off" name="website" value={website} onChange={(e) => setWebsite(e.target.value)} />
+              </label>
+            </div>
+          </div>
+        ) : (
+          <StageFields
+            fields={screen.fields}
+            answers={answers}
+            errors={live ? errors : {}}
+            reducedMotion={reduced}
+            onChange={onChange}
+            onPick={onPick}
+            hideLegend={screen.mode === "auto"}
+          />
+        )}
+        {screen.mode === "text" ? (
+          <button type="submit" className="btn btn-primary btn-block" data-reveal="">
+            Continuar <span aria-hidden="true">→</span>
+          </button>
+        ) : screen.mode === "auto" ? (
+          <button type="submit" className="sr-only" tabIndex={-1}>
+            Confirmar escolha
+          </button>
+        ) : null}
       </form>
     );
   };
 
-  const panelKey = view === "hero" ? "hero" : view === "done" ? "done" : `step-${step}`;
+  const panelKey = view === "hero" ? "hero" : view === "done" ? "done" : `step-${step}-${q}`;
   const stage = STAGES[step];
-  const lastStep = step === TOTAL_STAGES - 1;
 
   const getPanelWidth = useMemo(
     () => () => {
@@ -335,28 +438,25 @@ export default function OnboardingApp() {
           </p>
           {view === "form" && (
             <nav className="rail" aria-label="Progresso do diagnóstico" style={{ "--p": (step + 1) / TOTAL_STAGES } as React.CSSProperties}>
-              <div className="rail-top">
-                <span>
-                  Etapa <strong>{step + 1}</strong> de {TOTAL_STAGES}
-                </span>
-                <strong className="rail-name">{stage.name}</strong>
-              </div>
-              {/* celular: barra compacta 03/06 com a linha preenchendo */}
-              <div className="rail-bar" aria-hidden="true">
-                <span className="rail-count">
+              <button type="button" className="rail-back" onClick={onBack} aria-label="Voltar">
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <span className="rail-top">
+                <span className="rail-count" aria-hidden="true">
                   {String(step + 1).padStart(2, "0")}/{String(TOTAL_STAGES).padStart(2, "0")}
                 </span>
-                <span className="rail-track">
-                  <i />
+                <span className="sr-only">
+                  Etapa {step + 1} de {TOTAL_STAGES}
                 </span>
-              </div>
-              {/* tablet/desktop: rota com 6 pontos entre ilhas */}
+                <strong className="rail-name">{stage.name}</strong>
+              </span>
               <ol className="route">
                 {STAGES.map((s, i) => {
                   const state = i === step ? "active" : done[i] ? "done" : "future";
                   return (
                     <li key={s.id} data-state={state}>
-                      <span className="link" aria-hidden="true" />
                       <button
                         type="button"
                         className="seg"
@@ -366,15 +466,7 @@ export default function OnboardingApp() {
                         aria-label={`Etapa ${s.number}: ${s.name}${done[i] ? ", concluída" : ""}`}
                         onClick={() => visit(i)}
                       >
-                        <span className="dot" aria-hidden="true">
-                          <svg viewBox="0 0 12 12" fill="none">
-                            <path d="M2.5 6.4 5 8.8 9.6 3.6" pathLength={1} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                          <b>{s.number}</b>
-                        </span>
-                        <span className="seg-name" aria-hidden="true">
-                          {s.name}
-                        </span>
+                        <span className="dot" aria-hidden="true" />
                       </button>
                     </li>
                   );
@@ -385,23 +477,6 @@ export default function OnboardingApp() {
           <CrossFade panelKey={panelKey} direction={dir} reducedMotion={reduced} render={render} />
         </div>
 
-        {view === "form" && (
-          <>
-            {submitError && (
-              <p className="banner" role="alert">
-                {submitError}
-              </p>
-            )}
-            <div className="actionbar">
-              <button type="button" className="btn btn-ghost" onClick={onBack}>
-                Voltar
-              </button>
-              <button type="button" className="btn btn-primary" onClick={onContinue} aria-busy={submitting} disabled={submitting}>
-                {submitting ? "Enviando" : lastStep ? "Enviar diagnóstico" : "Continuar"}
-              </button>
-            </div>
-          </>
-        )}
       </main>
 
       <PrivacyDialog ref={dialogRef} onClose={closePrivacy} onClearDraft={() => { discardDraft(); closePrivacy(); }} />

@@ -15,3 +15,4 @@
 - **D1 direto da Vercel (`ISLAND_LEADS_MODE=d1`)**: implementado e testado com fetch simulado; PENDENTE de validação real (conta/token/variáveis na Vercel, redeploy e um envio de teste conferido no D1).
 
 - Textos dos cards do carrossel de serviços são provisórios: precisam de validação da Island antes de publicar.
+- Campos opcionais "Quer contar mais?" (desafioDetalhe) e "Meta para 90 dias" (meta) saíram da tela para o fluxo em 1 clique; continuam aceitos pela API e pela base (chegam vazios). Confirmar com a Island se podem ficar de fora.

@@ -112,8 +112,14 @@ export class ArchipelagoScene {
     this.renderer.toneMappingExposure = 1.15;
 
     this.build();
-    this.startIntro();
     this.resize();
+    // compila todos os programas agora (ilhas já presentes, só que submersas): nada compila no meio da animação
+    try {
+      this.renderer.compile(this.scene, this.camera);
+    } catch {
+      /* ignora: compila sob demanda */
+    }
+    this.startIntro();
 
     // debounce em rAF: evita tempestade de resize (barra do navegador mobile) que fazia a cena piscar
     this.ro = new ResizeObserver(() => {
@@ -147,12 +153,31 @@ export class ArchipelagoScene {
     return this.state.reducedMotion || !!this.mq?.matches;
   }
 
-  /** as ilhas surgem uma por uma (sem tela de carregamento); com movimento reduzido já nascem completas */
+  /** quadros iniciais do intro: o monitor de desempenho ignora esse período (compilação de shaders) */
+  private introUntil = 0;
+
+  /**
+   * As ilhas emergem do mar uma por uma, de baixo para cima (sem tela de carregamento).
+   * Todos os shaders são compilados antes do primeiro quadro, para a subida não engasgar.
+   * Com movimento reduzido já nascem completas.
+   */
   private startIntro() {
     if (this.reduced) return;
     this.rev.forEach((o) => (o.v = 0));
     this.opts.labels.forEach((el) => (el.style.opacity = "0"));
-    gsap.to(this.rev, { v: 1, duration: 1.15, ease: "power3.out", stagger: 0.32, delay: 0.12 });
+    // a subida só começa depois de 2 quadros já desenhados: o trabalho pesado inicial
+    // (compilação, primeiro upload de geometria) não "come" o começo da animação
+    this.introFrames = 2;
+    this.introUntil = Number.POSITIVE_INFINITY;
+  }
+
+  private introFrames = 0;
+  private launchIntro() {
+    const delay = 0.15;
+    const dur = 1.9;
+    const stagger = 0.26;
+    this.introUntil = performance.now() + (delay + dur + stagger * this.rev.length) * 1000;
+    gsap.to(this.rev, { v: 1, duration: dur, ease: "sine.out", stagger, delay });
   }
 
   private build() {
@@ -276,6 +301,7 @@ export class ArchipelagoScene {
     deltaMs = step;
     this.frame(performance.now(), deltaMs / 1000);
     // monitor de desempenho: rebaixa a qualidade (sem remover a narrativa)
+    if (performance.now() < this.introUntil) return; // não rebaixa a qualidade durante a entrada
     this.frameAcc += deltaMs;
     this.frameCount++;
     if (this.frameCount >= 90) {
@@ -338,11 +364,8 @@ export class ArchipelagoScene {
     // ilhas, água e rota respondem ao progresso real
     const orange = new THREE.Color(PALETTE.orange);
     const cyan = new THREE.Color(PALETTE.cyan);
-    const overshoot = (x: number) => {
-      if (x >= 1) return 1;
-      const y = x - 1;
-      return 1 + 2.35 * y * y * y + 1.35 * y * y; // easeOutBack: surge e assenta
-    };
+    // subida suave: começa submersa (o mar opaco esconde) e emerge sem saltos
+    const rise = (x: number) => (x >= 1 ? 1 : 1 - Math.pow(1 - x, 2.2));
     let revealMean = 0;
     this.islands.forEach((h, i) => {
       if (!this.reduced) h.update(t);
@@ -350,15 +373,16 @@ export class ArchipelagoScene {
       const l = ISLAND_LAYOUT[i];
       const r = this.rev[i]?.v ?? 1;
       revealMean += r / this.islands.length;
-      h.root.visible = r > 0.002;
-      h.root.scale.setScalar(l.scale * Math.max(0.0001, overshoot(r)));
-      h.root.position.y = (r - 1) * 0.9;
+      const e = rise(r);
+      h.root.scale.setScalar(l.scale * (0.9 + 0.1 * e));
+      h.root.position.y = (e - 1) * 2.4 * l.scale;
+      // ondulação leve enquanto rompe a superfície
+      h.root.rotation.z = (1 - e) * 0.08 * Math.sin(t * 2.2 + i);
       const c = orange.clone().lerp(cyan, h.cur.done * (1 - h.cur.active));
-      this.ocean.setIsland(i, l.x, l.z, 2.1, (0.05 + h.cur.active * 0.5 + h.cur.done * 0.26) * r, c);
+      this.ocean.setIsland(i, l.x, l.z, 2.1, (0.05 + h.cur.active * 0.5 + h.cur.done * 0.26) * e, c);
     });
-    const r0 = this.rev[0]?.v ?? 1;
-    this.boat.root.visible = r0 > 0.05;
-    this.boat.trail.visible = r0 > 0.05;
+    const r0 = rise(this.rev[0]?.v ?? 1);
+    this.boat.root.position.y = (r0 - 1) * 0.8;
     this.routeMesh.setMaster(revealMean);
     this.ocean.update(t);
     const next = this.route.stopU.find((su) => su > u + 0.002);
@@ -376,6 +400,7 @@ export class ArchipelagoScene {
 
     this.renderer.render(this.scene, this.camera);
     this.updateLabels();
+    if (this.introFrames > 0 && --this.introFrames === 0) this.launchIntro();
 
     const dbg = getDebug();
     if (dbg) {
@@ -410,7 +435,7 @@ export class ArchipelagoScene {
       const x = (this.tmp.x * 0.5 + 0.5) * w;
       const y = (-this.tmp.y * 0.5 + 0.5) * h;
       el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
-      const o = Math.min(1, (this.rev[i]?.v ?? 1) * 1.6).toFixed(2);
+      const o = Math.min(1, Math.max(0, ((this.rev[i]?.v ?? 1) - 0.45) / 0.4)).toFixed(2);
       if (el.style.opacity !== o) el.style.opacity = o;
       const st =
         this.state.phase === "form" && this.state.activeStep === i
